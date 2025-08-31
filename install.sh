@@ -169,6 +169,13 @@ install_x-ui() {
     systemctl daemon-reload
     systemctl enable x-ui
     systemctl start x-ui
+
+
+
+    # گزینه 23: BBR خودکار
+    enable_bbr_default
+
+    
     echo -e "${green}x-ui ${tag_version}${plain} installation finished, it is running now..."
     echo -e ""
     echo -e "┌───────────────────────────────────────────────────────┐
