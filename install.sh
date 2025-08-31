@@ -103,6 +103,36 @@ config_after_install() {
 }
 
 
+enable_bbr_default() {
+  # اگر کرنل BBR نداره، رد شو (نصب رو fail نکن)
+  if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+    echo -e "${yellow}Kernel seems not to support BBR; skipping auto-enable.${plain}"
+    return 0
+  fi
+
+  # خطوط قدیمی رو پاک کن تا تکراری نشه
+  sed -i '/^net.core.default_qdisc=/d' /etc/sysctl.conf
+  sed -i '/^net.ipv4.tcp_congestion_control=/d' /etc/sysctl.conf
+
+  # فعال‌سازی BBR
+  {
+    echo 'net.core.default_qdisc=fq'
+    echo 'net.ipv4.tcp_congestion_control=bbr'
+  } >> /etc/sysctl.conf
+
+  # اعمال تنظیمات
+  sysctl -p >/dev/null 2>&1 || true
+
+  # تایید
+  cc=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+  if [ "$cc" = "bbr" ]; then
+    echo -e "${green}BBR enabled successfully.${plain}"
+  else
+    echo -e "${yellow}Tried to enable BBR, but active cc is: ${cc:-unknown}.${plain}"
+  fi
+}
+
+
 install_x-ui() {
     cd /usr/local/
 
