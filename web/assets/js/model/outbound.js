@@ -3,7 +3,7 @@ const Protocols = {
     Blackhole: "blackhole",
     DNS: "dns",
     VMess: "vmess",
-    VLESS: "warpi",
+    VLESS: "vless",
     Trojan: "trojan",
     Shadowsocks: "shadowsocks",
     Socks: "socks",
