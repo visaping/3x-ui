@@ -1,6 +1,6 @@
 const Protocols = {
     VMESS: 'vmess',
-    VLESS: 'warpi',
+    VLESS: 'vless',
     TROJAN: 'trojan',
     SHADOWSOCKS: 'shadowsocks',
     DOKODEMO: 'dokodemo-door',
