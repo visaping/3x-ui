@@ -15,6 +15,7 @@ xui_service="${XUI_SERVICE:=/etc/systemd/system}"
 # Set NONINTERACTIVE=1 to auto-accept defaults and avoid manual input.
 # You can override these by exporting variables before running the script.
 NONINTERACTIVE="${NONINTERACTIVE:=1}"
+DISABLE_SSL="${DISABLE_SSL:=1}"  # 1 = skip all SSL/ACME steps
 DEFAULT_PANEL_PORT="${DEFAULT_PANEL_PORT:=8443}"
 DEFAULT_PANEL_USERNAME="${DEFAULT_PANEL_USERNAME:=y}"
 DEFAULT_PANEL_PASSWORD="${DEFAULT_PANEL_PASSWORD:=y}"
@@ -558,6 +559,10 @@ ssl_cert_issue() {
 # Reusable interactive SSL setup (domain or IP)
 # Sets global `SSL_HOST` to the chosen domain/IP for Access URL usage
 prompt_and_setup_ssl() {
+    if [[ "${DISABLE_SSL}" == "1" ]]; then
+        echo -e "${yellow}SSL setup is disabled by script settings; skipping certificate/ACME steps.${plain}"
+        return 0
+    fi
     local panel_port="$1"
     local web_base_path="$2"   # expected without leading slash
     local server_ip="$3"
@@ -726,14 +731,8 @@ config_after_install() {
             ${xui_folder}/x-ui setting -username "${config_username}" -password "${config_password}" -port "${config_port}" -webBasePath "${config_webBasePath}"
             
             echo ""
-            echo -e "${green}═══════════════════════════════════════════${plain}"
-            echo -e "${green}     SSL Certificate Setup (MANDATORY)     ${plain}"
-            echo -e "${green}═══════════════════════════════════════════${plain}"
-            echo -e "${yellow}For security, SSL certificate is required for all panels.${plain}"
-            echo -e "${yellow}Let's Encrypt now supports both domains and IP addresses!${plain}"
             echo ""
-
-            prompt_and_setup_ssl "${config_port}" "${config_webBasePath}" "${server_ip}"
+            echo -e "${yellow}SSL/ACME steps are disabled; skipping certificate setup.${plain}"
             
             # Display final credentials and access information
             echo ""
