@@ -6,6 +6,27 @@ blue='\033[0;34m'
 yellow='\033[0;33m'
 plain='\033[0m'
 
+print_access_url() {
+    # usage: print_access_url proto host port webBasePath
+    local proto="$1"
+    local host="$2"
+    local port="$3"
+    local base="$4"
+
+    if [[ -z "${host}" ]]; then
+        # Fall back to server_ip if available
+        host="${server_ip}"
+    fi
+
+    local path=""
+    if [[ -n "${base}" ]]; then
+        path="/${base}"
+    fi
+
+    echo -e "${green}Access URL:${plain} ${proto}://${host}:${port}${path}"
+}
+
+
 cur_dir=$(pwd)
 
 xui_folder="${XUI_MAIN_FOLDER:=/usr/local/x-ui}"
@@ -543,7 +564,7 @@ ssl_cert_issue() {
             echo -e "${green}Certificate File: $webCertFile${plain}"
             echo -e "${green}Private Key File: $webKeyFile${plain}"
             echo ""
-            echo -e "${green}Access URL: https://${domain}:${existing_port}/${existing_webBasePath}${plain}"
+            print_access_url "http" "${domain}" "${existing_port}" "${existing_webBasePath}"
             echo -e "${yellow}Panel will restart to apply SSL certificate...${plain}"
             systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null
         else
@@ -744,9 +765,9 @@ config_after_install() {
             echo -e "${green}Port:        ${config_port}${plain}"
             echo -e "${green}WebBasePath: ${config_webBasePath}${plain}"
             if [[ -n "${config_webBasePath}" ]]; then
-            echo -e "${green}Access URL:  https://${SSL_HOST}:${config_port}/${config_webBasePath}${plain}"
+            print_access_url "http" "${SSL_HOST}" "${config_port}" "${config_webBasePath}"
             else
-            echo -e "${green}Access URL:  https://${SSL_HOST}:${config_port}${plain}"
+            print_access_url "http" "${SSL_HOST}" "${config_port}" ""
             fi
             echo -e "${green}═══════════════════════════════════════════${plain}"
             echo -e "${yellow}⚠ IMPORTANT: Save these credentials securely!${plain}"
@@ -766,10 +787,10 @@ config_after_install() {
                 echo -e "${yellow}Let's Encrypt now supports both domains and IP addresses!${plain}"
                 echo ""
                 prompt_and_setup_ssl "${existing_port}" "${config_webBasePath}" "${server_ip}"
-                echo -e "${green}Access URL:  https://${SSL_HOST}:${existing_port}/${config_webBasePath}${plain}"
+                print_access_url "http" "${SSL_HOST}" "${existing_port}" "${config_webBasePath}"
             else
                 # If a cert already exists, just show the access URL
-                echo -e "${green}Access URL: https://${server_ip}:${existing_port}/${config_webBasePath}${plain}"
+                print_access_url "http" "${server_ip}" "${existing_port}" "${config_webBasePath}"
             fi
         fi
     else
@@ -799,7 +820,7 @@ config_after_install() {
             echo -e "${yellow}Let's Encrypt now supports both domains and IP addresses!${plain}"
             echo ""
             prompt_and_setup_ssl "${existing_port}" "${existing_webBasePath}" "${server_ip}"
-            echo -e "${green}Access URL:  https://${SSL_HOST}:${existing_port}/${existing_webBasePath}${plain}"
+            print_access_url "http" "${SSL_HOST}" "${existing_port}" "${existing_webBasePath}"
         else
             echo -e "${green}SSL certificate already configured. No action needed.${plain}"
         fi
