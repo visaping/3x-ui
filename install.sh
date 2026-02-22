@@ -11,6 +11,30 @@ cur_dir=$(pwd)
 xui_folder="${XUI_MAIN_FOLDER:=/usr/local/x-ui}"
 xui_service="${XUI_SERVICE:=/etc/systemd/system}"
 
+# ===================== NON-INTERACTIVE DEFAULTS =====================
+# Set NONINTERACTIVE=1 to auto-accept defaults and avoid manual input.
+# You can override these by exporting variables before running the script.
+NONINTERACTIVE="${NONINTERACTIVE:=1}"
+DEFAULT_PANEL_PORT="${DEFAULT_PANEL_PORT:=8443}"
+DEFAULT_PANEL_USERNAME="${DEFAULT_PANEL_USERNAME:=y}"
+DEFAULT_PANEL_PASSWORD="${DEFAULT_PANEL_PASSWORD:=y}"
+DEFAULT_PANEL_WEBBASEPATH="${DEFAULT_PANEL_WEBBASEPATH:=}"   # keep empty as requested
+
+# In NONINTERACTIVE mode: behave as if user presses Enter for any prompt.
+# This makes `read -rp ... var` set var="" everywhere, so the script's own defaults kick in.
+if [[ "${NONINTERACTIVE}" == "1" ]]; then
+    read() {
+        local var="${@: -1}"
+        if [[ "$var" == -* ]]; then
+            return 0
+        fi
+        printf -v "$var" "%s" ""
+        return 0
+    }
+fi
+# ====================================================================
+
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}Fatal error: ${plain} Please run this script with root privilege \n " && exit 1
 
@@ -107,6 +131,27 @@ gen_random_string() {
     local length="$1"
     local random_string=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w "$length" | head -n 1)
     echo "$random_string"
+}
+
+enable_bbr() {
+    # Try to enable BBR congestion control (best-effort)
+    modprobe tcp_bbr 2>/dev/null || true
+    if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+        sed -i '/^net\.core\.default_qdisc=/d' /etc/sysctl.conf 2>/dev/null || true
+        sed -i '/^net\.ipv4\.tcp_congestion_control=/d' /etc/sysctl.conf 2>/dev/null || true
+        {
+            echo 'net.core.default_qdisc=fq'
+            echo 'net.ipv4.tcp_congestion_control=bbr'
+        } >> /etc/sysctl.conf
+        sysctl -p >/dev/null 2>&1 || true
+        if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -qw bbr; then
+            echo -e "${green}BBR enabled successfully.${plain}"
+        else
+            echo -e "${yellow}Tried to enable BBR, but active cc is not bbr.${plain}"
+        fi
+    else
+        echo -e "${yellow}Kernel seems not to support BBR; skipping auto-enable.${plain}"
+    fi
 }
 
 install_acme() {
@@ -420,6 +465,7 @@ ssl_cert_issue() {
         echo -e "${red}Issuing certificate failed, please check logs.${plain}"
         rm -rf ~/.acme.sh/${domain}
         systemctl start x-ui 2>/dev/null || rc-service x-ui start 2>/dev/null
+        enable_bbr
         return 1
     else
         echo -e "${green}Issuing certificate succeeded, installing certificates...${plain}"
@@ -665,19 +711,18 @@ config_after_install() {
     
     if [[ ${#existing_webBasePath} -lt 4 ]]; then
         if [[ "$existing_hasDefaultCredential" == "true" ]]; then
-            local config_webBasePath=$(gen_random_string 18)
-            local config_username=$(gen_random_string 10)
-            local config_password=$(gen_random_string 10)
-            
-            read -rp "Would you like to customize the Panel Port settings? (If not, a random port will be applied) [y/n]: " config_confirm
-            if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
-                read -rp "Please set up the panel port: " config_port
-                echo -e "${yellow}Your Panel Port is: ${config_port}${plain}"
-            else
-                local config_port=$(shuf -i 1024-62000 -n 1)
-                echo -e "${yellow}Generated random port: ${config_port}${plain}"
-            fi
-            
+            # Non-interactive requested defaults
+            local config_webBasePath="${DEFAULT_PANEL_WEBBASEPATH}"
+            local config_username="${DEFAULT_PANEL_USERNAME}"
+            local config_password="${DEFAULT_PANEL_PASSWORD}"
+            local config_port="${DEFAULT_PANEL_PORT}"
+
+            echo -e "${yellow}Applying requested default panel settings (non-interactive):${plain}"
+            echo -e "${yellow}  Port: ${config_port}${plain}"
+            echo -e "${yellow}  Username: ${config_username}${plain}"
+            echo -e "${yellow}  Password: ${config_password}${plain}"
+            echo -e "${yellow}  WebBasePath: (empty)${plain}"
+
             ${xui_folder}/x-ui setting -username "${config_username}" -password "${config_password}" -port "${config_port}" -webBasePath "${config_webBasePath}"
             
             echo ""
@@ -699,7 +744,11 @@ config_after_install() {
             echo -e "${green}Password:    ${config_password}${plain}"
             echo -e "${green}Port:        ${config_port}${plain}"
             echo -e "${green}WebBasePath: ${config_webBasePath}${plain}"
+            if [[ -n "${config_webBasePath}" ]]; then
             echo -e "${green}Access URL:  https://${SSL_HOST}:${config_port}/${config_webBasePath}${plain}"
+            else
+            echo -e "${green}Access URL:  https://${SSL_HOST}:${config_port}${plain}"
+            fi
             echo -e "${green}═══════════════════════════════════════════${plain}"
             echo -e "${yellow}⚠ IMPORTANT: Save these credentials securely!${plain}"
             echo -e "${yellow}⚠ SSL Certificate: Enabled and configured${plain}"
@@ -931,6 +980,7 @@ install_x-ui() {
             systemctl daemon-reload
             systemctl enable x-ui
             systemctl start x-ui
+            enable_bbr
         else
             echo -e "${red}Failed to install x-ui.service file${plain}"
             exit 1
