@@ -9,6 +9,30 @@ plain='\033[0m'
 xui_folder="${XUI_MAIN_FOLDER:=/usr/local/x-ui}"
 xui_service="${XUI_SERVICE:=/etc/systemd/system}"
 
+# ===================== VPING AUTOMATED INSTALL DEFAULTS =====================
+# Preserve the unattended behaviour of the previous custom installer.
+# All values can still be overridden with environment variables when needed.
+XUI_NONINTERACTIVE="${XUI_NONINTERACTIVE:-${NONINTERACTIVE:-1}}"
+DISABLE_SSL="${DISABLE_SSL:-1}"
+DEFAULT_PANEL_PORT="${DEFAULT_PANEL_PORT:-8443}"
+DEFAULT_PANEL_USERNAME="${DEFAULT_PANEL_USERNAME:-y}"
+DEFAULT_PANEL_PASSWORD="${DEFAULT_PANEL_PASSWORD:-y}"
+DEFAULT_PANEL_WEBBASEPATH="${DEFAULT_PANEL_WEBBASEPATH-}"
+XUI_DB_TYPE="${XUI_DB_TYPE:-sqlite}"
+XUI_ENABLE_FAIL2BAN="${XUI_ENABLE_FAIL2BAN:-false}"
+
+# Backward-compatible mapping for the old DISABLE_SSL switch.
+# DISABLE_SSL=1 -> no panel SSL (same as the previous installer)
+# DISABLE_SSL=0 -> use the new installer's automatic IP-certificate mode
+if [[ -z "${XUI_SSL_MODE+x}" ]]; then
+    if [[ "${DISABLE_SSL}" == "1" ]]; then
+        XUI_SSL_MODE="none"
+    else
+        XUI_SSL_MODE="ip"
+    fi
+fi
+# ============================================================================
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}Fatal error: ${plain} Please run this script with root privilege \n " && exit 1
 
@@ -128,6 +152,27 @@ gen_random_string() {
     openssl rand -base64 $((length * 2)) \
         | tr -dc 'a-zA-Z0-9' \
         | head -c "$length"
+}
+
+enable_bbr() {
+    # Best-effort BBR setup preserved from the previous custom installer.
+    modprobe tcp_bbr 2> /dev/null || true
+    if sysctl net.ipv4.tcp_available_congestion_control 2> /dev/null | grep -qw bbr; then
+        sed -i '/^net\.core\.default_qdisc=/d' /etc/sysctl.conf 2> /dev/null || true
+        sed -i '/^net\.ipv4\.tcp_congestion_control=/d' /etc/sysctl.conf 2> /dev/null || true
+        {
+            echo 'net.core.default_qdisc=fq'
+            echo 'net.ipv4.tcp_congestion_control=bbr'
+        } >> /etc/sysctl.conf
+        sysctl -p > /dev/null 2>&1 || true
+        if sysctl net.ipv4.tcp_congestion_control 2> /dev/null | grep -qw bbr; then
+            echo -e "${green}BBR enabled successfully.${plain}"
+        else
+            echo -e "${yellow}Tried to enable BBR, but active cc is not bbr.${plain}"
+        fi
+    else
+        echo -e "${yellow}Kernel seems not to support BBR; skipping auto-enable.${plain}"
+    fi
 }
 
 # prompt_or_default VARNAME "prompt text" "default" [ENV_NAME]
@@ -1062,9 +1107,9 @@ config_after_install() {
 
     if [[ ${#existing_webBasePath} -lt 4 ]]; then
         if [[ "$existing_hasDefaultCredential" == "true" ]]; then
-            local config_webBasePath="${XUI_WEB_BASE_PATH:-$(gen_random_string 18)}"
-            local config_username="${XUI_USERNAME:-$(gen_random_string 10)}"
-            local config_password="${XUI_PASSWORD:-$(gen_random_string 10)}"
+            local config_webBasePath="${XUI_WEB_BASE_PATH-${DEFAULT_PANEL_WEBBASEPATH}}"
+            local config_username="${XUI_USERNAME:-${DEFAULT_PANEL_USERNAME}}"
+            local config_password="${XUI_PASSWORD:-${DEFAULT_PANEL_PASSWORD}}"
             local config_port=""
 
             local db_label="SQLite (/etc/x-ui/x-ui.db)"
@@ -1196,13 +1241,8 @@ EOF
             fi
 
             if [[ "$NONINTERACTIVE" == "1" ]]; then
-                if [[ -n "${XUI_PANEL_PORT:-}" ]]; then
-                    config_port="${XUI_PANEL_PORT}"
-                    echo -e "${yellow}Your Panel Port is: ${config_port}${plain}"
-                else
-                    config_port=$(shuf -i 1024-62000 -n 1)
-                    echo -e "${yellow}Generated random port: ${config_port}${plain}"
-                fi
+                config_port="${XUI_PANEL_PORT:-${DEFAULT_PANEL_PORT}}"
+                echo -e "${yellow}Your Panel Port is: ${config_port}${plain}"
             else
                 read -rp "Would you like to customize the Panel Port settings? (If not, a random port will be applied) [y/n]: " config_confirm
                 if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
@@ -1411,27 +1451,12 @@ _install_xui_service_unit() {
     return 0
 }
 
-# resolve_latest_tag prints the latest stable release tag. It prefers the web
-# releases/latest redirect, which is not subject to the unauthenticated API's
-# 60 req/h-per-IP limit that trips shared CI/CGNAT addresses (the install then
-# fails with "Failed to fetch x-ui version"), and falls back to the API.
-resolve_latest_tag() {
-    local url tag
-    url=$(curl -sSLI -o /dev/null -w '%{url_effective}' --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://github.com/MHSanaei/3x-ui/releases/latest" 2>/dev/null)
-    tag=${url##*/tag/}
-    if [[ "$tag" != "$url" && -n "$tag" && "$tag" != "latest" ]]; then
-        echo "$tag"
-        return 0
-    fi
-    curl -Ls --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
-}
-
 install_x-ui() {
     cd ${xui_folder%/x-ui}/
 
     # Download resources
     if [ $# == 0 ]; then
-        tag_version=$(resolve_latest_tag)
+        tag_version=$(curl -Ls --retry 5 --retry-delay 3 --connect-timeout 15 --max-time 60 "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$tag_version" ]]; then
             echo -e "${red}Failed to fetch x-ui version, it may be due to GitHub API restrictions, please try it later${plain}"
             exit 1
@@ -1720,6 +1745,7 @@ install_x-ui() {
             systemctl daemon-reload
             systemctl enable x-ui
             systemctl start x-ui
+            enable_bbr
         else
             echo -e "${red}Failed to install x-ui.service file${plain}"
             exit 1
